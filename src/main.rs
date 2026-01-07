@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use reqwest::Client;
 use reqwest::header;
 use serde::Deserialize;
+use std::time::Instant;
 use std::{env, sync::Arc, time::Duration};
 use tokio::sync::RwLock;
 
@@ -17,6 +18,10 @@ struct AppState {
     address: String,
     /// 当前显示的游戏名 (Web 接口读取，后台任务写入)
     current_game_name: Arc<RwLock<String>>,
+
+    // 新增：当前游戏开始的时间 (如果是 None 表示未在游玩)
+    session_start_time: Arc<RwLock<Option<Instant>>>,
+
     /// 缓存: AppID -> 中文名 (避免重复请求 API)
     name_cache: DashMap<u32, String>,
     // HTTP 客户端
@@ -58,8 +63,12 @@ async fn main() -> Result<()> {
     // 2. 初始化共享状态
     let shared_state = Arc::new(AppState {
         address,
+
         current_game_name: Arc::new(RwLock::new("未在游玩".to_string())),
+        session_start_time: Arc::new(RwLock::new(None)),
+
         name_cache: DashMap::new(),
+
         http_client,
         api_base_url,
     });
@@ -84,9 +93,79 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn format_duration(elapsed: std::time::Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+
+    if hours > 0 {
+        format!("{:02}:{:02}:{:02}", hours, minutes, secs)
+    } else {
+        format!("{:02}:{:02}", minutes, secs)
+    }
+}
+
+async fn get_svg_template() -> String {
+    r##"<svg xmlns="http://www.w3.org/2000/svg" width="3500" height="700" viewBox="0 0 350 70">
+        <foreignObject width="350" height="70">
+            <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%;">
+                <style>
+                    .card {
+                        background: linear-gradient(135deg, #171a21 0%, #2a475e 100%);
+                        width: 200px;
+                        height: 30px;
+                        display: flex;
+                        align-items: center;
+                        border-radius: 5px;
+                        padding: 10px;
+                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                    }
+                    .content {
+                        display: flex;
+                        width: 100%;
+                        flex-direction: column;
+                        justify-content: center;
+                        overflow: hidden;
+                        white-space: nowrap;
+                    }
+                    .label {
+                        display: flex;
+                        justify-content: space-between;
+                        font-size: 10px;
+                        color: #8F98A0;
+                        margin-bottom: 2px;
+                        text-transform: uppercase;
+                        letter-spacing: 0.5px;
+                    }
+                    .game-name {
+                        font-size: 14px;
+                        color: %GameNameColor%;
+                        font-weight: bold;
+                        text-overflow: ellipsis;
+                        overflow: hidden;
+                        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+                    }
+                </style>
+                <div class="card">
+                    <div class="content">
+                        <div class="label">
+                            <span> %Status% </span>
+                            <span style="font-family: monospace;"> %PlayTime% </span>
+                        </div>
+                        <div class="game-name">%GameName%</div>
+                    </div>
+                </div>
+            </div>
+        </foreignObject>
+        </svg>"##.to_string()
+}
+
 // --- 1. 数据接口：返回 SVG 片段或空字符串 ---
 async fn current_game_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let game_name = state.current_game_name.read().await;
+    let start_time = state.session_start_time.read().await;
 
     // 逻辑：如果 "未在游玩"，返回空内容（透明）；否则返回 SVG
     let content = if *game_name == "未在游玩" {
@@ -95,59 +174,19 @@ async fn current_game_handler(State(state): State<Arc<AppState>>) -> impl IntoRe
         let status_text = "正在游玩";
         let game_color = "#66C0F4"; // Steam 亮蓝
 
-        // 使用你提供的高分辨率缩放方案 (3500x700 对应 viewBox 350x70)
-        format!(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="3500" height="700" viewBox="0 0 350 70">
-                <foreignObject width="350" height="70">
-                    <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%;">
-                        <style>
-                            .card {{
-                                background: linear-gradient(135deg, #171a21 0%, #2a475e 100%);
-                                width: 200px;
-                                height: 30px;
-                                display: flex;
-                                align-items: center;
-                                border-radius: 5px;
-                                padding: 10px;
-                                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                                box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                            }}
-                            .content {{
-                                display: flex;
-                                flex-direction: column;
-                                justify-content: center;
-                                overflow: hidden;
-                                white-space: nowrap;
-                            }}
-                            .label {{
-                                font-size: 10px;
-                                color: #8F98A0;
-                                margin-bottom: 2px;
-                                text-transform: uppercase;
-                                letter-spacing: 0.5px;
-                            }}
-                            .game-name {{
-                                font-size: 14px;
-                                color: {color};
-                                font-weight: bold;
-                                text-overflow: ellipsis;
-                                overflow: hidden;
-                                text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-                            }}
-                        </style>
-                        <div class="card">
-                            <div class="content">
-                                <div class="label">{status}</div>
-                                <div class="game-name">{name}</div>
-                            </div>
-                        </div>
-                    </div>
-                </foreignObject>
-            </svg>"##,
-            color = game_color,
-            status = status_text,
-            name = *game_name
-        )
+        let play_time_str = if let Some(start) = *start_time {
+            format_duration(start.elapsed())
+        } else {
+            "00:00".to_string()
+        };
+
+        let template = get_svg_template().await;
+
+        template
+            .replace("%Status%", status_text)
+            .replace("%GameName%", &game_name)
+            .replace("%PlayTime%", &play_time_str)
+            .replace("%GameNameColor%", game_color)
     };
 
     // 返回响应：必须包含禁止缓存的 Header，否则 OBS 可能会一直显示旧状态
@@ -247,38 +286,62 @@ async fn monitor_loop(state: Arc<AppState>) {
         // 获取当前运行的 AppID
         let app_id = get_running_app_id();
 
-        // 获取写锁准备更新状态
-        let mut current_name_guard = state.current_game_name.write().await;
+        #[derive(Debug)]
+        enum StateUpdateResult {
+            None,
+            Success(String),
+            ErrorWithMsg(String),
+        }
+        let mut new_game_name = StateUpdateResult::None;
 
         match app_id {
             Some(id) => {
                 // 1. 先查缓存
                 if let Some(cached_name) = state.name_cache.get(&id) {
-                    *current_name_guard = cached_name.clone();
+                    new_game_name = StateUpdateResult::Success(cached_name.clone());
                 } else {
-                    // 2. 缓存没有，请求网络 (释放锁避免阻塞 Web 请求)
-                    drop(current_name_guard);
-
                     let name = fetch_game_name(&state.http_client, &state.api_base_url, id).await;
 
                     // 写入缓存，只记录成功的名称
                     if let Ok(ref name) = name {
                         println!("已记录 AppID: {} -- {}", id, name);
+                        new_game_name = StateUpdateResult::Success(name.clone());
                         state.name_cache.insert(id, name.clone());
-                    } else if let Err(ref e) = name{
+                    } else if let Err(e) = name{
                         println!("AppID: {}，请求失败：{}", id, e);
+                        new_game_name = StateUpdateResult::ErrorWithMsg(e);
                     }
-
-                    let name = name.unwrap_or_else(|e| e);
-
-                    // 重新获取锁并更新
-                    let mut g = state.current_game_name.write().await;
-                    *g = name;
                 }
             }
             None => {
-                *current_name_guard = "未在游玩".to_string();
+                new_game_name = StateUpdateResult::Success("未在游玩".to_string());
             }
+        }
+
+        let mut name_guard = state.current_game_name.write().await;
+        let mut time_guard = state.session_start_time.write().await;
+
+        // 如果 new_game_name 为 None，表示读取失败，不更新状态
+        // 如果名字变了 (比如从 "未在游玩" -> "黑神话"，或者从 "CSGO" -> "DOTA2")
+        match new_game_name {
+            StateUpdateResult::Success(new_game_name) => {
+                if *name_guard != new_game_name {
+                    *name_guard = new_game_name.clone(); // 更新名字
+
+                    dbg!(&new_game_name);
+                    if new_game_name == "未在游玩" {
+                        *time_guard = None; // 停止计时
+                    } else {
+                        *time_guard = Some(Instant::now()); // 开始新计时
+                    }
+                }
+            }
+            StateUpdateResult::ErrorWithMsg(err_msg) => {
+                if *name_guard != err_msg {
+                    *name_guard = err_msg;
+                }
+            }
+            StateUpdateResult::None => { /* 不更新状态 */ }
         }
     }
 }
