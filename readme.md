@@ -26,9 +26,29 @@ STEAM_API_URL="https://store.steampowered.com"
 
 // 监听地址，默认为本地 3000 端口。
 LISTEN_ADDRESS="localhost:3000"
+
+// 访问密码，用于将自己的游玩状态与其他人区分开
+// 必须配置
+API_TOKEN=XXXX
 ```
 
-### OBS 配置
+
+
+## 使用说明
+
+解压所有文件
+
+用记事本打开 config.ps1 文件，修改 `API_TOKEN` 为任意密码（例如 5050）
+
+![配置config](./docs/config-pass.jpg)
+
+
+
+双击 `启动.bat`，此时会弹出一个黑底的命令提示符，上面是程序运行的日志
+
+
+
+打开 OBS，如图配置：
 
 ![obs 配置](./docs/obs-setup.jpg)
 

@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
     // 获取监听地址，默认为 localhost:3000，可通过环境变量覆盖
-    let address = env::var("LISTEN_ADDRESS").unwrap_or_else(|_| "localhost:3000".to_string());
+    let address = env::var("LISTEN_ADDRESS").unwrap_or_else(|_| "0.0.0.0:3000".to_string());
 
     // 获取 API 地址，默认为官方地址，可通过环境变量覆盖
     let api_base_url =
