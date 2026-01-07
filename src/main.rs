@@ -106,60 +106,162 @@ fn format_duration(elapsed: std::time::Duration) -> String {
     }
 }
 
-async fn get_svg_template() -> String {
-    r##"<svg xmlns="http://www.w3.org/2000/svg" width="3500" height="700" viewBox="0 0 350 70">
-        <foreignObject width="350" height="70">
-            <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%;">
-                <style>
-                    .card {
-                        background: linear-gradient(135deg, #171a21 0%, #2a475e 100%);
-                        width: 200px;
-                        height: 30px;
-                        display: flex;
-                        align-items: center;
-                        border-radius: 5px;
-                        padding: 10px;
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-                    }
-                    .content {
-                        display: flex;
-                        width: 100%;
-                        flex-direction: column;
-                        justify-content: center;
-                        overflow: hidden;
-                        white-space: nowrap;
-                    }
-                    .label {
-                        display: flex;
-                        justify-content: space-between;
-                        font-size: 10px;
-                        color: #8F98A0;
-                        margin-bottom: 2px;
-                        text-transform: uppercase;
-                        letter-spacing: 0.5px;
-                    }
-                    .game-name {
-                        font-size: 14px;
-                        color: %GameNameColor%;
-                        font-weight: bold;
-                        text-overflow: ellipsis;
-                        overflow: hidden;
-                        text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-                    }
-                </style>
-                <div class="card">
-                    <div class="content">
-                        <div class="label">
-                            <span> %Status% </span>
-                            <span style="font-family: monospace;"> %PlayTime% </span>
-                        </div>
-                        <div class="game-name">%GameName%</div>
-                    </div>
-                </div>
-            </div>
-        </foreignObject>
-        </svg>"##.to_string()
+async fn get_html_template() -> String {
+    r##"
+    <style>
+        .steam-monitor-scope {
+            font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, sans-serif;
+            box-sizing: border-box;
+            /* 强制 GPU 渲染，在高分屏下防止文字抖动 */
+            transform: translateZ(0);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .steam-card {
+            display: inline-flex;
+            flex-direction: row;
+            align-items: center;
+
+            background: linear-gradient(135deg, #171a21 0%, #2a475e 100%);
+
+            /* 宽度限制放大到 4000px */
+            max-width: 4000px;
+
+            /* 高度放大: 100 -> 200 */
+            height: 200px;
+
+            /* 圆角放大: 16 -> 32 */
+            border-radius: 32px;
+
+            /* 内边距放大: 24 -> 48 */
+            padding: 0 48px;
+
+            /* 阴影放大 */
+            box-shadow: 0 16px 32px rgba(0,0,0,0.4);
+
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .steam-card span {
+            line-height: normal;
+        }
+
+        /* 1. 标签：当前游玩 */
+        .steam-label {
+            /* 字体放大: 28 -> 56 */
+            font-size: 56px;
+            color: #8F98A0;
+            font-weight: 500;
+            text-shadow: 0px 4px 4px rgba(0,0,0,0.8); /* 阴影偏移放大 */
+
+            margin-right: 8px; /* 间距放大 */
+            flex-shrink: 0;
+        }
+
+        /* 外层盒子 */
+        .steam-game-name-box {
+            display: inline-flex;
+            align-items: center;
+
+            flex: 0 1 auto;
+            min-width: 0;
+
+            /* 高度放大: 64 -> 128 */
+            height: 128px;
+            box-sizing: border-box;
+
+            background: rgba(0, 0, 0, 0.35);
+
+            /* 边框放大: 2 -> 4 */
+            border: 4px solid rgba(102, 192, 244, 0.25);
+
+            /* 圆角放大: 12 -> 24 */
+            border-radius: 24px;
+
+            /* 内边距放大: 20 -> 40 */
+            padding: 0 40px;
+
+            /* 左右外边距放大: 16 -> 32 */
+            margin: 0 32px;
+        }
+
+        /* 内层文本 */
+        .steam-game-name-text {
+            display: block;
+            width: 100%;
+
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: center;
+
+            /* 字体放大: 28 -> 56 */
+            font-size: 56px;
+            font-weight: bold;
+            color: %GameNameColor%;
+
+            /* 发光范围放大: 15 -> 30 */
+            text-shadow: 0px 0px 30px rgba(102, 192, 244, 0.5);
+        }
+
+        /* 4. 时间色块 */
+        .steam-time {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+
+            /* 高度放大: 54 -> 108 */
+            height: 108px;
+
+            font-family: 'Consolas', 'Monaco', monospace;
+
+            /* 字体放大: 28 -> 56 */
+            font-size: 56px;
+            color: #c7d5e0;
+
+            background-color: #1b2838;
+
+            /* 边框放大: 2 -> 4 */
+            border: 4px solid #2a3f5a;
+
+            /* 内边距放大: 16 -> 32 */
+            padding: 0 32px;
+
+            /* 圆角放大: 8 -> 16 */
+            border-radius: 16px;
+
+            /* 字间距放大: 1 -> 2 */
+            letter-spacing: 2px;
+            flex-shrink: 0;
+        }
+
+        .time-icon {
+            /* 图标放大: 24 -> 48 */
+            font-size: 48px;
+
+            /* 间距放大: 10 -> 20 */
+            margin-right: 20px;
+
+            filter: grayscale(100%) opacity(0.7);
+        }
+    </style>
+
+    <div class="steam-monitor-scope">
+        <div class="steam-card">
+            <span class="steam-label">%Status%</span>
+
+            <span class="steam-game-name-box">
+                <span class="steam-game-name-text">%GameName%</span>
+            </span>
+
+            <span class="steam-time">
+                <span class="time-icon">⏱</span>
+                %PlayTime%
+            </span>
+        </div>
+    </div>
+    "##.to_string()
 }
 
 // --- 1. 数据接口：返回 SVG 片段或空字符串 ---
@@ -180,7 +282,7 @@ async fn current_game_handler(State(state): State<Arc<AppState>>) -> impl IntoRe
             "00:00".to_string()
         };
 
-        let template = get_svg_template().await;
+        let template = get_html_template().await;
 
         template
             .replace("%Status%", status_text)
@@ -328,7 +430,6 @@ async fn monitor_loop(state: Arc<AppState>) {
                 if *name_guard != new_game_name {
                     *name_guard = new_game_name.clone(); // 更新名字
 
-                    dbg!(&new_game_name);
                     if new_game_name == "未在游玩" {
                         *time_guard = None; // 停止计时
                     } else {

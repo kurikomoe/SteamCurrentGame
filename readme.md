@@ -30,10 +30,11 @@ LISTEN_ADDRESS="localhost:3000"
 
 ### OBS 配置
 
-![obs 配置](./docs/obs-setup.png)
+![obs 配置](./docs/obs-setup.jpg)
 
 ## TODO
 
+- [x] 支持自适应长度
+- [x] 支持显示游戏时长
 - [ ] 支持显示游戏图标
-- [ ] 支持显示游戏时长
-- [ ] 自定义显示模板
+- [ ] 自定义显示模板（代码架构上支持了）
