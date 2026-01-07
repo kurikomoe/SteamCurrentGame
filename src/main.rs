@@ -112,7 +112,6 @@ async fn get_html_template() -> String {
         .steam-monitor-scope {
             font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, sans-serif;
             box-sizing: border-box;
-            /* 强制 GPU 渲染，在高分屏下防止文字抖动 */
             transform: translateZ(0);
             -webkit-font-smoothing: antialiased;
         }
@@ -121,24 +120,12 @@ async fn get_html_template() -> String {
             display: inline-flex;
             flex-direction: row;
             align-items: center;
-
             background: linear-gradient(135deg, #171a21 0%, #2a475e 100%);
-
-            /* 宽度限制放大到 4000px */
             max-width: 4000px;
-
-            /* 高度放大: 100 -> 200 */
             height: 200px;
-
-            /* 圆角放大: 16 -> 32 */
             border-radius: 32px;
-
-            /* 内边距放大: 24 -> 48 */
             padding: 0 48px;
-
-            /* 阴影放大 */
             box-shadow: 0 16px 32px rgba(0,0,0,0.4);
-
             white-space: nowrap;
             overflow: hidden;
         }
@@ -147,102 +134,76 @@ async fn get_html_template() -> String {
             line-height: normal;
         }
 
-        /* 1. 标签：当前游玩 */
         .steam-label {
-            /* 字体放大: 28 -> 56 */
             font-size: 56px;
             color: #8F98A0;
             font-weight: 500;
-            text-shadow: 0px 4px 4px rgba(0,0,0,0.8); /* 阴影偏移放大 */
-
-            margin-right: 8px; /* 间距放大 */
+            text-shadow: 0px 4px 4px rgba(0,0,0,0.8);
+            margin-right: 8px;
             flex-shrink: 0;
         }
 
-        /* 外层盒子 */
+        /* --- 游戏名外层盒子 --- */
         .steam-game-name-box {
-            display: inline-flex;
+            /* 使用 flex 布局来管理内层文本 */
+            display: flex;
             align-items: center;
+            justify-content: center;
 
+            /* 收缩权重 1，自动基础大小 */
             flex: 0 1 auto;
-            min-width: 0;
 
-            /* 高度放大: 64 -> 128 */
+            min-width: 250px;
+            max-width: 100%;
+
             height: 128px;
             box-sizing: border-box;
-
             background: rgba(0, 0, 0, 0.35);
-
-            /* 边框放大: 2 -> 4 */
             border: 4px solid rgba(102, 192, 244, 0.25);
-
-            /* 圆角放大: 12 -> 24 */
             border-radius: 24px;
-
-            /* 内边距放大: 20 -> 40 */
             padding: 0 40px;
-
-            /* 左右外边距放大: 16 -> 32 */
             margin: 0 32px;
         }
 
-        /* 内层文本 */
+        /* --- 游戏名内层文本 --- */
         .steam-game-name-text {
-            display: block;
-            width: 100%;
+            /* 关键：允许 flex 项目压缩到比内容更小，从而触发 ellipsis */
+            min-width: 0;
+
+            /* 占满空间 */
+            flex: 1;
 
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
             text-align: center;
 
-            /* 字体放大: 28 -> 56 */
             font-size: 56px;
             font-weight: bold;
             color: %GameNameColor%;
-
-            /* 发光范围放大: 15 -> 30 */
             text-shadow: 0px 0px 30px rgba(102, 192, 244, 0.5);
         }
 
-        /* 4. 时间色块 */
         .steam-time {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-
-            /* 高度放大: 54 -> 108 */
+            min-width: 200px;
             height: 108px;
-
             font-family: 'Consolas', 'Monaco', monospace;
-
-            /* 字体放大: 28 -> 56 */
             font-size: 56px;
             color: #c7d5e0;
-
             background-color: #1b2838;
-
-            /* 边框放大: 2 -> 4 */
             border: 4px solid #2a3f5a;
-
-            /* 内边距放大: 16 -> 32 */
             padding: 0 32px;
-
-            /* 圆角放大: 8 -> 16 */
             border-radius: 16px;
-
-            /* 字间距放大: 1 -> 2 */
             letter-spacing: 2px;
             flex-shrink: 0;
         }
 
         .time-icon {
-            /* 图标放大: 24 -> 48 */
             font-size: 48px;
-
-            /* 间距放大: 10 -> 20 */
             margin-right: 20px;
-
             filter: grayscale(100%) opacity(0.7);
         }
     </style>
@@ -251,9 +212,9 @@ async fn get_html_template() -> String {
         <div class="steam-card">
             <span class="steam-label">%Status%</span>
 
-            <span class="steam-game-name-box">
+            <div class="steam-game-name-box">
                 <span class="steam-game-name-text">%GameName%</span>
-            </span>
+            </div>
 
             <span class="steam-time">
                 <span class="time-icon">⏱</span>
@@ -321,13 +282,24 @@ async fn root_handler() -> impl IntoResponse {
                     background-color: transparent;
                     overflow: hidden;
                 }
-                /* 容器用于放置 SVG */
+
+                /* 容器用于放置卡片 */
                 #container {
                     width: 100%;
                     height: 100%;
                     display: flex;
                     align-items: center;
-                    justify-content: flex-start;
+                    justify-content: flex-start; /* 靠左对齐 */
+                    padding: 40px; /* 给一点边距，防止贴边 */
+                    box-sizing: border-box;
+
+                    /* --- 核心动画设置 --- */
+                    opacity: 0; /* 默认隐藏 */
+                    transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1); /* 平滑的淡入淡出曲线 */
+
+                    /* 保持硬件加速，防止动画模糊 */
+                    transform: translateZ(0);
+                    will-change: opacity;
                 }
             </style>
         </head>
@@ -335,31 +307,49 @@ async fn root_handler() -> impl IntoResponse {
             <div id="container"></div>
 
             <script>
-                const API_URL = "/current"; // 相对路径，请求同域下的接口
-                const REFRESH_INTERVAL = 1000; // 1秒轮询一次
+                const API_URL = "/current";
+                const REFRESH_INTERVAL = 1000;
                 const container = document.getElementById('container');
 
-                updateState = async() => {
+                let isVisible = false;
+
+                const updateState = async() => {
                     try {
                         const response = await fetch(API_URL);
 
                         if (response.ok) {
                             const htmlContent = await response.text();
+                            const isPlaying = htmlContent.trim().length > 0;
 
-                            // 3. 简单的 Diff：只有内容变了才更新 DOM，避免闪烁
-                            if (container.innerHTML !== htmlContent) {
-                                container.innerHTML = htmlContent;
+                            if (isPlaying) {
+                                // 状态：正在游玩
+                                if (container.innerHTML !== htmlContent) {
+                                    container.innerHTML = htmlContent;
+                                }
+
+                                if (!isVisible) {
+                                    requestAnimationFrame(() => {
+                                        container.style.opacity = '1';
+                                    });
+                                    isVisible = true;
+                                }
+
+                            } else {
+                                // 状态：未在游玩 (后端返回空)
+                                if (isVisible) {
+                                    container.style.opacity = '0';
+                                    isVisible = false;
+                                }
                             }
+
                         } else {
                             throw new Error("Server error");
                         }
                     } catch (error) {
-                        // 如果 fetch 失败（网络断了、Rust 进程挂了），
-                        // 将内容清空，OBS 上显示为全透明，而不是报错页面。
-                        // 等 Rust 重启后，下一次轮询会自动恢复显示。
-                        console.warn("Connection lost or server error, clearing display...", error);
-                        if (container.innerHTML !== "") {
-                            container.innerHTML = "";
+                        console.warn("Connection lost...", error);
+                        if (isVisible) {
+                            container.style.opacity = '0';
+                            isVisible = false;
                         }
                     }
                 }
