@@ -109,117 +109,115 @@ fn format_duration(elapsed: std::time::Duration) -> String {
 async fn get_html_template() -> String {
     r##"
     <style>
-        .steam-monitor-scope {
-            font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, sans-serif;
+        /* 全局容器设置 */
+        .obs-hidpi-scope {
+            font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif;
             box-sizing: border-box;
-            transform: translateZ(0);
-            -webkit-font-smoothing: antialiased;
-        }
 
-        .steam-card {
             display: inline-flex;
             flex-direction: row;
-            align-items: center;
-            background: linear-gradient(135deg, #171a21 0%, #2a475e 100%);
-            max-width: 4000px;
-            height: 200px;
-            border-radius: 32px;
-            padding: 0 48px;
-            box-shadow: 0 16px 32px rgba(0,0,0,0.4);
-            white-space: nowrap;
-            overflow: hidden;
+            align-items: stretch;
+            height: 160px;
+            padding: 8px;
+
+            margin: 0;
+            line-height: 1;
         }
 
-        .steam-card span {
-            line-height: normal;
-        }
-
-        .steam-label {
-            font-size: 56px;
-            color: #8F98A0;
-            font-weight: 500;
-            text-shadow: 0px 4px 4px rgba(0,0,0,0.8);
-            margin-right: 8px;
-            flex-shrink: 0;
-        }
-
-        /* --- 游戏名外层盒子 --- */
-        .steam-game-name-box {
-            /* 使用 flex 布局来管理内层文本 */
+        /* --- 通用方块基础样式 --- */
+        .hud-block {
             display: flex;
             align-items: center;
             justify-content: center;
 
-            /* 收缩权重 1，自动基础大小 */
-            flex: 0 1 auto;
+            /* [2x] 内边距 24px -> 48px */
+            padding: 0 48px;
 
-            min-width: 250px;
-            max-width: 100%;
+            border-radius: 0;
+            background-color: #0a0a0a;
 
-            height: 128px;
-            box-sizing: border-box;
-            background: rgba(0, 0, 0, 0.35);
-            border: 4px solid rgba(102, 192, 244, 0.25);
-            border-radius: 24px;
-            padding: 0 40px;
-            margin: 0 32px;
+            border: 4px solid #e0e0e0;
+            margin-right: -4px;
+
+            position: relative;
         }
 
-        /* --- 游戏名内层文本 --- */
-        .steam-game-name-text {
-            /* 关键：允许 flex 项目压缩到比内容更小，从而触发 ellipsis */
-            min-width: 0;
+        /* --- 1. 状态块 (左侧) --- */
+        .block-status {
+            background-color: #e0e0e0;
+            color: #000000;
+            font-weight: 900;
 
-            /* 占满空间 */
-            flex: 1;
+            font-size: 56px;
+
+            text-transform: uppercase;
+
+            min-width: 200px;
+            z-index: 3;
+        }
+
+        /* --- 2. 游戏名块 (中间) --- */
+        .block-game {
+            flex: 0 1 auto;
+
+            max-width: 1200px;
+            min-width: 400px;
+
+            color: #ffffff;
+
+            font-size: 64px;
+
+            font-weight: bold;
+            z-index: 2;
 
             white-space: nowrap;
             overflow: hidden;
-            text-overflow: ellipsis;
-            text-align: center;
-
-            font-size: 56px;
-            font-weight: bold;
-            color: %GameNameColor%;
-            text-shadow: 0px 0px 30px rgba(102, 192, 244, 0.5);
         }
 
-        .steam-time {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 200px;
-            height: 108px;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 56px;
-            color: #c7d5e0;
-            background-color: #1b2838;
-            border: 4px solid #2a3f5a;
-            padding: 0 32px;
-            border-radius: 16px;
-            letter-spacing: 2px;
-            flex-shrink: 0;
+        .game-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            /* [2x] 微调 2px -> 4px */
+            padding-bottom: 4px;
+        }
+
+        /* --- 3. 时间块 (右侧) --- */
+        .block-time {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #1a1a1a;
+            color: #cccccc;
+
+            font-size: 64px;
+
+            min-width: 320px;
+            z-index: 1;
+
+            border-right: 12px solid #66c0f4;
         }
 
         .time-icon {
             font-size: 48px;
-            margin-right: 20px;
-            filter: grayscale(100%) opacity(0.7);
+
+            margin-right: 24px;
+
+            color: #66c0f4;
+            font-weight: bold;
         }
+
     </style>
 
-    <div class="steam-monitor-scope">
-        <div class="steam-card">
-            <span class="steam-label">%Status%</span>
+    <div class="obs-hidpi-scope">
+        <div class="hud-block block-status">
+            %Status%
+        </div>
 
-            <div class="steam-game-name-box">
-                <span class="steam-game-name-text">%GameName%</span>
-            </div>
+        <div class="hud-block block-game">
+            <span class="game-text">%GameName%</span>
+        </div>
 
-            <span class="steam-time">
-                <span class="time-icon">⏱</span>
-                %PlayTime%
-            </span>
+        <div class="hud-block block-time">
+            <span class="time-icon">TIME</span>
+            %PlayTime%
         </div>
     </div>
     "##.to_string()
@@ -234,7 +232,7 @@ async fn current_game_handler(State(state): State<Arc<AppState>>) -> impl IntoRe
     let content = if *game_name == "未在游玩" {
         String::new()
     } else {
-        let status_text = "正在游玩";
+        let status_text = "当前游戏";
         let game_color = "#66C0F4"; // Steam 亮蓝
 
         let play_time_str = if let Some(start) = *start_time {
