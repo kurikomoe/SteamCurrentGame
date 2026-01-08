@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Steam Status Monitor</title>
+    <style>
+        /* 确保页面背景完全透明 */
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: transparent;
+            overflow: hidden;
+        }
+
+        /* 容器用于放置卡片 */
+
+        #container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            /* 靠左对齐 */
+            padding: 40px;
+            /* 给一点边距，防止贴边 */
+            box-sizing: border-box;
+            /* --- 核心动画设置 --- */
+            opacity: 0;
+            /* 默认隐藏 */
+            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            /* 平滑的淡入淡出曲线 */
+            /* 保持硬件加速，防止动画模糊 */
+            transform: translateZ(0);
+            will-change: opacity;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container"></div>
+
+    <script>
+        const API_URL = "/current/%token%";
+        const REFRESH_INTERVAL = 1000; // API 请求间隔 (1秒)
+        const CYCLE_INTERVAL = 30000; // 显示/隐藏周期 (30秒)
+
+        const container = document.getElementById('container');
+
+        // 状态变量
+        let isGameRunning = false; // API 是否返回了游戏数据
+        let isInDisplayCycle = true; // 当前是否处于“显示”的时间段
+        let currentOpacity = '0'; // 记录当前的 DOM 透明度，防止重复操作
+
+        // 核心渲染函数：决定是否显示
+        const render = () =>
+        {
+            // 只有当 [游戏正在运行] 且 [处于显示周期] 时，才显示
+            const shouldShow = isGameRunning && isInDisplayCycle;
+            const targetOpacity = shouldShow ? '1' : '0';
+
+            // 只有状态改变时才操作 DOM
+            if (currentOpacity !== targetOpacity)
+            {
+                requestAnimationFrame(() =>
+                {
+                    container.style.opacity = targetOpacity;
+                });
+                currentOpacity = targetOpacity;
+                console.log(
+                    `State Updated: Game=${isGameRunning}, Cycle=${isInDisplayCycle}, Opacity=${targetOpacity}`
+                );
+            }
+        };
+
+        const toggleCycle = () =>
+        {
+            isInDisplayCycle = !isInDisplayCycle; // 切换 True/False
+            render(); // 状态改变，立即重新渲染
+        };
+        // 启动周期切换 (30秒)
+        let cycleIntervalId = setInterval(toggleCycle, CYCLE_INTERVAL);
+
+        // 1. 数据轮询逻辑 (保持 1秒一次)
+        const updateData = async () =>
+        {
+            try
+            {
+                const response = await fetch(API_URL);
+                if (response.ok)
+                {
+                    const htmlContent = await response.text();
+                    const hasContent = htmlContent.trim().length > 0;
+
+                    // 如果内容发生变化，更新 HTML
+                    // 注意：这里只更新内容，不直接控制显示/隐藏，显示/隐藏由 render() 统一管理
+                    if (hasContent && container.innerHTML !== htmlContent)
+                    {
+                        container.innerHTML = htmlContent;
+                    }
+
+                    if (isGameRunning !== hasContent && hasContent)
+                    {
+                        console.log(
+                            `Game State Changed: Now ${hasContent ? 'Running' : 'Not Running'}`
+                        );
+
+                        isInDisplayCycle = true; // 重置为显示状态
+                        clearInterval(cycleIntervalId);
+                        cycleIntervalId = setInterval(toggleCycle,
+                            CYCLE_INTERVAL);
+                    }
+
+                    isGameRunning = hasContent;
+                }
+                else
+                {
+                    // 服务器错误视为没在玩游戏
+                    isGameRunning = false;
+                }
+            }
+            catch (error)
+            {
+                console.warn("Connection lost...", error);
+                isGameRunning = false;
+            }
+            // 每次数据更新后，尝试渲染
+            render();
+        };
+
+        // 2. 周期控制逻辑 (30秒切换一次)
+
+        // --- 启动定时器 ---
+
+        // 启动数据轮询
+        setInterval(updateData, REFRESH_INTERVAL);
+
+        // 初始化立即执行一次
+        updateData();
+    </script>
+</body>
+
+</html>
