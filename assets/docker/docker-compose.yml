@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  steam-server:
+    # 构建当前目录下的 Dockerfile
+    build: . 
+    
+    # 容器名称
+    container_name: steam_monitor_server
+    
+    # [核心] 自动重启策略
+    # always: 无论是因为报错退出、Docker 重启还是服务器重启，它都会自动重新拉起
+    restart: always
+    
+    # 端口映射: 主机端口:容器端口
+    ports:
+      - "3000:3000"
+    
+    # 设置时区 (可选，让日志时间显示正常)
+    environment:
+      - TZ=Asia/Shanghai
+      - RUST_LOG=info
+      
+    # 挂载宿主机时间 (可选)
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+
+    logging:
+      driver: "local"
+      options:
+        compress: "true"
+        max-size: "100m"
+        max-file: "10"

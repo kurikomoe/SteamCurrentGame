@@ -83,6 +83,10 @@ async fn upload_handler(
     State(server_state): State<Arc<ServerState>>,
     Json(payload): Json<ReportData>,
 ) -> impl IntoResponse {
+    let mut old_app_id = 0;
+    let mut old_app_name = String::new();
+
+    let mut old_start_time = None;
     let new_app_id = payload.app_id;
     let token = payload.token;
 
@@ -93,9 +97,21 @@ async fn upload_handler(
         // 如果 token 不存在，这就插入默认值
         let state = app_states_guard.entry(token.clone()).or_insert_with(AppState::default);
 
+        let needs_update = state.current_app_id != new_app_id;
+        if needs_update {
+            old_app_id = state.current_app_id;
+            old_start_time = state.session_start_time;
+            old_app_name = if old_app_id != 0 {
+                server_state.name_cache.read().await
+                    .get(&old_app_id)
+                    .cloned()
+                    .unwrap_or_else(|| state.current_game_name.clone())
+            } else {
+                "未在游玩".to_string()
+            };
+        }
         // 只有 ID 变了才需要后续的耗时操作
-        state.current_app_id != new_app_id
-        // 离开作用域，写锁自动释放！别人可以读了！
+        needs_update
     };
 
     if !needs_update {
@@ -136,7 +152,17 @@ async fn upload_handler(
         };
         (name, Some(Instant::now()))
     };
-    println!("[{}] 状态变更 -> {} ({})", &token, new_app_id, game_name);
+    let (play_time_str, play_time) =
+        if let Some(start) = old_start_time {
+            (format_duration(start.elapsed()), start.elapsed().as_secs())
+        } else {
+            ("00:00".to_string(), 0)
+        };
+    println!("[{}] 状态变更 {} ({}) -> {} ({}), 游戏时长为: {} ({})",
+        &token,
+        old_app_id, old_app_name,
+        new_app_id, game_name,
+        play_time_str, play_time);
 
     // --- 第三步：写入数据 (再次获取写锁，极快) ---
     {
@@ -147,7 +173,6 @@ async fn upload_handler(
         state.current_app_id = new_app_id;
         state.current_game_name = game_name;
         state.session_start_time = start_time;
-        // 离开作用域，锁释放
     }
 
     "OK"
