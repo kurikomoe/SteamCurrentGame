@@ -7,10 +7,10 @@
         display: inline-flex;
         flex-direction: row;
         align-items: stretch;
-        height: 160px;
+        height: 120px;
         padding: 8px;
         margin: 0;
-        line-height: 1;
+        line-height: normal;
     }
 
     /* --- 通用方块基础样式 --- */
@@ -20,7 +20,7 @@
         align-items: center;
         justify-content: center;
         /* [2x] 内边距 24px -> 48px */
-        padding: 0 48px;
+        padding: 0 32px;
         border-radius: 0;
         background-color: #0a0a0a;
         border: 4px solid #e0e0e0;
@@ -34,31 +34,34 @@
         background-color: #e0e0e0;
         color: #000000;
         font-weight: 900;
-        font-size: 56px;
+        font-size: 48px;
         text-transform: uppercase;
         min-width: 200px;
         z-index: 3;
+        line-height: 1;
     }
 
     /* --- 2. 游戏名块 (中间) --- */
 
     .block-game {
         flex: 0 1 auto;
-        max-width: 1200px;
+        max-width: 1800px;
         min-width: 400px;
         color: #ffffff;
-        font-size: 64px;
+        font-size: 56px;
         font-weight: bold;
         z-index: 2;
         white-space: nowrap;
         overflow: hidden;
+        line-height: 1.25;
     }
 
     .game-text {
         overflow: hidden;
         text-overflow: ellipsis;
-        /* [2x] 微调 2px -> 4px */
-        padding-bottom: 4px;
+        padding-bottom: 8px;
+        /* 微调位置, 对齐 baseline */
+        margin-top: 4px;
     }
 
     /* --- 3. 时间块 (右侧) --- */
@@ -67,10 +70,11 @@
         font-family: 'Consolas', 'Courier New', monospace;
         background-color: #1a1a1a;
         color: #cccccc;
-        font-size: 64px;
+        font-size: 48px;
         min-width: 320px;
         z-index: 1;
         border-right: 12px solid #66c0f4;
+        line-height: 1;
     }
 
     .time-icon {
@@ -78,6 +82,7 @@
         margin-right: 24px;
         color: #66c0f4;
         font-weight: bold;
+        vertical-align: bottom;
     }
 </style>
 

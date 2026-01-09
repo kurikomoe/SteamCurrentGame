@@ -6,7 +6,6 @@
     <title>Steam Status Monitor</title>
     <style>
         /* 确保页面背景完全透明 */
-
         body,
         html {
             margin: 0;
@@ -18,25 +17,34 @@
         }
 
         /* 容器用于放置卡片 */
-
         #container {
             width: 100%;
             height: 100%;
             display: flex;
             align-items: center;
             justify-content: flex-start;
-            /* 靠左对齐 */
             padding: 40px;
-            /* 给一点边距，防止贴边 */
             box-sizing: border-box;
+
             /* --- 核心动画设置 --- */
+
+            /* 1. 初始状态：透明 且 向上偏移 (隐藏在上面) */
             opacity: 0;
-            /* 默认隐藏 */
-            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-            /* 平滑的淡入淡出曲线 */
-            /* 保持硬件加速，防止动画模糊 */
-            transform: translateZ(0);
-            will-change: opacity;
+            transform: translateY(-50px);
+
+            /* 2. 动画过渡：时间和曲线 */
+            /* 注意：这里的 2s 必须和 JS 里的 ANIMATION_DURATION 匹配 */
+            transition: opacity 2s ease, transform 2s cubic-bezier(0.2, 0.8, 0.2, 1);
+
+            /* 3. 硬件加速优化 */
+            will-change: opacity, transform;
+        }
+
+        /* --- 显示状态的 Class --- */
+        #container.visible {
+            opacity: 1;
+            /* 回到正常位置，形成下移效果 */
+            transform: translateY(0);
         }
     </style>
 </head>
@@ -46,100 +54,142 @@
 
     <script>
         const API_URL = "/current/%token%";
-        const REFRESH_INTERVAL = 1000; // API 请求间隔 (1秒)
-        const CYCLE_INTERVAL = 30000; // 显示/隐藏周期 (30秒)
+        const REFRESH_INTERVAL = 1000;
+        const CYCLE_INTERVAL = 30000;
+        const ANIMATION_DURATION = 2000; // 必须匹配 CSS 中的 transition 时间 (2s = 2000ms)
 
         const container = document.getElementById('container');
 
         // 状态变量
-        let isGameRunning = false; // API 是否返回了游戏数据
-        let isInDisplayCycle = true; // 当前是否处于“显示”的时间段
-        let currentOpacity = '0'; // 记录当前的 DOM 透明度，防止重复操作
+        let isGameRunning = false;
+        let isInDisplayCycle = true;
+        let lastShowState = false;
 
-        // 核心渲染函数：决定是否显示
-        const render = () =>
-        {
-            // 只有当 [游戏正在运行] 且 [处于显示周期] 时，才显示
+        // --- 新增：会话控制变量 ---
+        let currentSignature = "idle"; // 当前游戏的签名 (AppID_StartTime)
+        let isSwitchingGame = false;   // 是否正在执行切游戏动画
+
+        // 核心渲染函数
+        const render = () => {
+            // 如果正在转场中，强制执行“退出动画” (移除 visible)
+            if (isSwitchingGame) {
+                if (container.classList.contains('visible')) {
+                    container.classList.remove('visible');
+                    console.log("Animation: Switching Game - Sliding Out");
+                }
+                return;
+            }
+
             const shouldShow = isGameRunning && isInDisplayCycle;
-            const targetOpacity = shouldShow ? '1' : '0';
 
-            // 只有状态改变时才操作 DOM
-            if (currentOpacity !== targetOpacity)
-            {
-                requestAnimationFrame(() =>
-                {
-                    container.style.opacity = targetOpacity;
+            // 只有当状态真正改变时才操作 DOM，性能更好
+            if (shouldShow !== lastShowState) {
+                requestAnimationFrame(() => {
+                    if (shouldShow) {
+                        container.classList.add('visible');
+                    } else {
+                        container.classList.remove('visible');
+                    }
                 });
-                currentOpacity = targetOpacity;
+
+                lastShowState = shouldShow;
+
                 console.log(
-                    `State Updated: Game=${isGameRunning}, Cycle=${isInDisplayCycle}, Opacity=${targetOpacity}`
+                    `Animation Triggered: ${shouldShow ? 'Slide In' : 'Slide Out'}`
                 );
             }
         };
 
-        const toggleCycle = () =>
-        {
-            isInDisplayCycle = !isInDisplayCycle; // 切换 True/False
-            render(); // 状态改变，立即重新渲染
+        const toggleCycle = () => {
+            // 只有在没切游戏的时候才允许周期切换
+            if (isGameRunning && !isSwitchingGame) {
+                isInDisplayCycle = !isInDisplayCycle;
+                render();
+            }
         };
-        // 启动周期切换 (30秒)
+
         let cycleIntervalId = setInterval(toggleCycle, CYCLE_INTERVAL);
 
-        // 1. 数据轮询逻辑 (保持 1秒一次)
-        const updateData = async () =>
-        {
-            try
-            {
+        // 数据轮询逻辑
+        const updateData = async () => {
+            // 如果正在转场动画中，暂停数据更新，防止内容跳变
+            if (isSwitchingGame) return;
+
+            try {
                 const response = await fetch(API_URL);
-                if (response.ok)
-                {
-                    const htmlContent = await response.text();
-                    const hasContent = htmlContent.trim().length > 0;
+                if (response.ok) {
+                    // --- 核心修改：解析 JSON ---
+                    const json = await response.json();
+                    const { info, render: newHtmlContent } = json;
 
-                    // 如果内容发生变化，更新 HTML
-                    // 注意：这里只更新内容，不直接控制显示/隐藏，显示/隐藏由 render() 统一管理
-                    if (hasContent && container.innerHTML !== htmlContent)
-                    {
-                        container.innerHTML = htmlContent;
-                    }
+                    // --- 场景 1: 游戏开始 (从无到有) ---
+                    if (!isGameRunning && info.is_running) {
+                        console.log("Game Started.");
+                        container.innerHTML = newHtmlContent;
+                        currentSignature = info.signature;
 
-                    if (isGameRunning !== hasContent && hasContent)
-                    {
-                        console.log(
-                            `Game State Changed: Now ${hasContent ? 'Running' : 'Not Running'}`
-                        );
+                        isGameRunning = true;
+                        isInDisplayCycle = true; // 强制显示
 
-                        isInDisplayCycle = true; // 重置为显示状态
+                        // 重置周期
                         clearInterval(cycleIntervalId);
-                        cycleIntervalId = setInterval(toggleCycle,
-                            CYCLE_INTERVAL);
+                        cycleIntervalId = setInterval(toggleCycle, CYCLE_INTERVAL);
+
+                        render();
+                    }
+                    // --- 场景 2: 切换游戏 (签名变了) ---
+                    // 比如从 Dota2 换成 CS2，或者同一个游戏重启了
+                    else if (isGameRunning && info.is_running && info.signature !== currentSignature) {
+                        console.log(`Switching Game: ${currentSignature} -> ${info.signature}`);
+
+                        // 1. 锁定状态，开始转场
+                        isSwitchingGame = true;
+                        render(); // 这会触发 CSS 的 Slide Out 动画
+
+                        // 2. 等待动画结束 (2秒)
+                        setTimeout(() => {
+                            // 3. 替换内容
+                            container.innerHTML = newHtmlContent;
+                            currentSignature = info.signature;
+
+                            // 4. 解锁并重置状态
+                            isSwitchingGame = false;
+                            isInDisplayCycle = true; // 新游戏开始，必须显示
+
+                            clearInterval(cycleIntervalId);
+                            cycleIntervalId = setInterval(toggleCycle, CYCLE_INTERVAL);
+
+                            // 5. 强制触发 Slide In 动画
+                            lastShowState = false; // 欺骗 render 函数认为状态变了
+                            render();
+                        }, ANIMATION_DURATION);
+                    }
+                    // --- 场景 3: 同一个游戏，只更新时间 ---
+                    // 签名没变，只更新 HTML 内容
+                    else if (isGameRunning && info.is_running) {
+                        if (container.innerHTML !== newHtmlContent) {
+                            container.innerHTML = newHtmlContent;
+                        }
+                    }
+                    // --- 场景 4: 游戏结束 ---
+                    else if (isGameRunning && !info.is_running) {
+                        console.log("Game Stopped.");
+                        isGameRunning = false;
+                        currentSignature = "idle";
+                        render(); // 触发退出动画
                     }
 
-                    isGameRunning = hasContent;
-                }
-                else
-                {
-                    // 服务器错误视为没在玩游戏
+                } else {
+                    // 接口错误也视为游戏结束
                     isGameRunning = false;
+                    render();
                 }
-            }
-            catch (error)
-            {
+            } catch (error) {
                 console.warn("Connection lost...", error);
-                isGameRunning = false;
             }
-            // 每次数据更新后，尝试渲染
-            render();
         };
 
-        // 2. 周期控制逻辑 (30秒切换一次)
-
-        // --- 启动定时器 ---
-
-        // 启动数据轮询
         setInterval(updateData, REFRESH_INTERVAL);
-
-        // 初始化立即执行一次
         updateData();
     </script>
 </body>

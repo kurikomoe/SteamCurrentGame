@@ -4,8 +4,9 @@ use axum::{
 };
 use reqwest::Client;
 use serde::Deserialize;
-use steam_current_game::ReportData;
+use steam_current_game::{CurrentGameResponse, GameInfo, ReportData};
 use tokio::sync::RwLock;
+use tracing::{error, info, instrument};
 use std::{
     collections::HashMap, sync::Arc, time::{Duration, Instant}
 };
@@ -51,6 +52,15 @@ struct StoreData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::INFO)
+        .flatten_event(true)
+        .with_span_list(false)
+        .with_current_span(false)
+        .with_target(false)
+        .init();
+
     // 初始化
     let http_client = Client::builder()
         .timeout(Duration::from_secs(5))
@@ -71,7 +81,8 @@ async fn main() -> Result<()> {
         .with_state(shared_state);
 
     let listen_addr = "0.0.0.0:3000";
-    println!("Server listening on http://{}", listen_addr);
+    info!(address = %listen_addr, "Server starting");
+
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
     axum::serve(listener, app).await?;
 
@@ -79,6 +90,7 @@ async fn main() -> Result<()> {
 }
 
 // --- [核心逻辑] 处理 Client 上报 ---
+#[instrument(skip(server_state, payload), fields(token = %payload.token, app_id = payload.app_id))]
 async fn upload_handler(
     State(server_state): State<Arc<ServerState>>,
     Json(payload): Json<ReportData>,
@@ -145,7 +157,7 @@ async fn upload_handler(
                     n
                 }
                 Err(e) => {
-                    eprintln!("API Error: {}", e);
+                    error!(error = %e, app_id = new_app_id, "Steam API 请求失败");
                     format!("未知游戏 ({})", new_app_id)
                 }
             }
@@ -158,11 +170,16 @@ async fn upload_handler(
         } else {
             ("00:00".to_string(), 0)
         };
-    println!("[{}] 状态变更 {} ({}) -> {} ({}), 游戏时长为: {} ({})",
-        &token,
-        old_app_id, old_app_name,
-        new_app_id, game_name,
-        play_time_str, play_time);
+    info!(
+        token = %token,
+        old.app_id = old_app_id,
+        old.app_name = %old_app_name,
+        new.app_id = new_app_id,
+        new.game_name = %game_name,
+        last_session.duration_str = %play_time_str,
+        last_session.duration_sec = play_time,
+        "用户状态变更" // 这是一个 message 字段
+    );
 
     // --- 第三步：写入数据 (再次获取写锁，极快) ---
     {
@@ -178,55 +195,81 @@ async fn upload_handler(
     "OK"
 }
 
-// --- 保持原有的渲染逻辑 ---
 async fn current_game_handler(
     State(server_state): State<Arc<ServerState>>,
     Path(token): Path<String>
 ) -> impl IntoResponse {
     let app_states_guard = server_state.app_states.read().await;
+
+    // 1. 默认响应头 (JSON)
+    let headers = [
+        (header::CONTENT_TYPE, "application/json; charset=utf-8"),
+        (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
+        (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+    ];
+
+    // 2. 检查 Token 是否存在
     if app_states_guard.get(&token).is_none() {
-        // 未注册的 token，返回空内容
-        return (
-            [
-                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-                (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
-                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-            ],
-            String::new(),
-        );
+        let resp = CurrentGameResponse {
+            info: GameInfo {
+                is_running: false,
+                signature: "invalid_token".to_string(),
+            },
+            render: String::new(),
+        };
+        return (headers, Json(resp));
     }
-    let app_states_guard = server_state.app_states.read().await;
+
     let state = app_states_guard.get(&token).unwrap();
 
-    // 如果未在游玩，返回空内容
-    let content = if state.current_game_name == "未在游玩" {
-        String::new()
-    } else {
-        let status_text = "当前游戏";
-        let game_color = "#66C0F4";
-        let play_time_str = if let Some(start) = state.session_start_time {
-            format_duration(start.elapsed())
-        } else {
-            "00:00".to_string()
+    // 3. 判断是否在玩游戏
+    if state.current_game_name == "未在游玩" {
+        let resp = CurrentGameResponse {
+            info: GameInfo {
+                is_running: false,
+                // 当没玩游戏时，签名固定为 idle，方便前端去重
+                signature: "idle".to_string(),
+            },
+            render: String::new(),
         };
+        return (headers, Json(resp));
+    }
 
-        // 使用你之前调整好的最新 HTML 模板
-        get_html_template()
-            .await
-            .replace("%Status%", status_text)
-            .replace("%GameName%", &state.current_game_name)
-            .replace("%PlayTime%", &play_time_str)
-            .replace("%GameNameColor%", game_color)
+    // 4. 正在玩游戏：生成渲染内容
+    let status_text = "当前游戏";
+    let game_color = "#66C0F4";
+    let play_time_str = if let Some(start) = state.session_start_time {
+        format_duration(start.elapsed())
+    } else {
+        "00:00".to_string()
     };
 
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-cache, no-store, must-revalidate"),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-        ],
-        content,
-    )
+    let html = get_html_template()
+        .await
+        .replace("%Status%", status_text)
+        .replace("%GameName%", &state.current_game_name)
+        .replace("%PlayTime%", &play_time_str)
+        .replace("%GameNameColor%", game_color);
+
+    // 5. 生成会话签名
+    // 使用 "AppID_启动时间戳" 作为唯一标识。
+    // 如果 AppID 变了，或者同一个游戏关闭又重开了(时间变了)，签名都会变。
+    // 客户端不需要解析这个字符串，只管对比是否相等。
+    let signature = if let Some(start) = state.session_start_time {
+        format!("{}_{:?}", state.current_app_id, start)
+    } else {
+        format!("{}", state.current_app_id)
+    };
+
+    let resp = CurrentGameResponse {
+        info: GameInfo {
+            is_running: true,
+            signature,
+        },
+        render: html,
+    };
+
+    (headers, Json(resp))
 }
 
 fn format_duration(elapsed: Duration) -> String {
@@ -259,6 +302,7 @@ async fn root_handler(
 }
 
 // --- Steam API 请求 ---
+#[instrument(skip(client, base_url), err)]
 async fn fetch_game_name(client: &Client, base_url: &str, app_id: u32) -> Result<String, String> {
     let url = format!("{}/api/appdetails", base_url);
 
