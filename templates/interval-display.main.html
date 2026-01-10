@@ -68,6 +68,7 @@
         // --- 新增：会话控制变量 ---
         let currentSignature = "idle"; // 当前游戏的签名 (AppID_StartTime)
         let isSwitchingGame = false;   // 是否正在执行切游戏动画
+        let localBootId = null;        // 服务器实例 ID (用于检测重启)
 
         // 核心渲染函数
         const render = () => {
@@ -120,7 +121,18 @@
                 if (response.ok) {
                     // --- 核心修改：解析 JSON ---
                     const json = await response.json();
-                    const { info, render: newHtmlContent } = json;
+                    const { server, info, render: newHtmlContent } = json;
+
+                    // --- [新增] 服务器重启检测 ---
+                    // 如果本地没有 ID，就记录下来；如果 ID 变了，说明服务器重启过，刷新页面
+                    if (localBootId === null) {
+                        localBootId = server.boot_id;
+                        console.log(`Connected to Server Instance: ${localBootId}`);
+                    } else if (localBootId !== server.boot_id) {
+                        console.warn("Server Restart Detected! Reloading...");
+                        window.location.reload();
+                        return;
+                    }
 
                     // --- 场景 1: 游戏开始 (从无到有) ---
                     if (!isGameRunning && info.is_running) {

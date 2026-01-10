@@ -9,8 +9,14 @@ pub struct ReportData {
 
 #[derive(Serialize)]
 pub struct CurrentGameResponse {
+    pub server: ServerInfo,
     pub info: GameInfo,
     pub render: String,
+}
+
+#[derive(Serialize)]
+pub struct ServerInfo {
+    pub boot_id: String,
 }
 
 #[derive(Serialize)]

@@ -8,7 +8,7 @@ use winreg::{enums::*, RegKey};
 
 // --- 通讯协议 ---
 // 目标服务器配置
-const SERVER_URL: &str = "http://jp.kuriko.moe:3000/upload";
+const SERVER_URL: &str = "http://jp.kuriko.moe:3000";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,7 +47,10 @@ async fn main() -> Result<()> {
             };
 
             // 发送 POST 请求
-            match client.post(SERVER_URL).json(&payload).send().await {
+            let url = reqwest::Url::parse(&server_url).unwrap();
+            let url = url.join("upload").unwrap();
+
+            match client.post(url).json(&payload).send().await {
                 Ok(resp) => {
                     if resp.status().is_success() {
                         println!("上报成功: AppID {}", current_id);

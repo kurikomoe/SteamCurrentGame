@@ -4,7 +4,7 @@ use axum::{
 };
 use reqwest::Client;
 use serde::Deserialize;
-use steam_current_game::{CurrentGameResponse, GameInfo, ReportData};
+use steam_current_game::{CurrentGameResponse, GameInfo, ReportData, ServerInfo};
 use tokio::sync::RwLock;
 use tracing::{error, info, instrument};
 use std::{
@@ -13,6 +13,7 @@ use std::{
 
 // --- 状态存储 ---
 struct ServerState {
+    pub boot_id: String,
     pub app_states: Arc<RwLock<HashMap<String, AppState>>>,
     pub name_cache: Arc<RwLock<HashMap<u32, String>>>,
     pub http_client: Client,
@@ -68,6 +69,7 @@ async fn main() -> Result<()> {
 
     // 初始化状态
     let shared_state = Arc::new(ServerState {
+        boot_id: uuid::Uuid::new_v4().to_string(),
         app_states: Arc::new(RwLock::new(HashMap::new())),
         name_cache: Arc::new(RwLock::new(HashMap::new())),
         http_client,
@@ -211,6 +213,9 @@ async fn current_game_handler(
     // 2. 检查 Token 是否存在
     if app_states_guard.get(&token).is_none() {
         let resp = CurrentGameResponse {
+            server: ServerInfo {
+                boot_id: server_state.boot_id.clone(),
+            },
             info: GameInfo {
                 is_running: false,
                 signature: "invalid_token".to_string(),
@@ -225,6 +230,9 @@ async fn current_game_handler(
     // 3. 判断是否在玩游戏
     if state.current_game_name == "未在游玩" {
         let resp = CurrentGameResponse {
+            server: ServerInfo {
+                boot_id: server_state.boot_id.clone(),
+            },
             info: GameInfo {
                 is_running: false,
                 // 当没玩游戏时，签名固定为 idle，方便前端去重
@@ -262,6 +270,9 @@ async fn current_game_handler(
     };
 
     let resp = CurrentGameResponse {
+        server: ServerInfo {
+            boot_id: server_state.boot_id.clone(),
+        },
         info: GameInfo {
             is_running: true,
             signature,
