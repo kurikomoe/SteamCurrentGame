@@ -8,7 +8,7 @@ use steam_current_game::{CurrentGameResponse, GameInfo, ReportData, ServerInfo};
 use tokio::sync::RwLock;
 use tracing::{error, info, instrument};
 use std::{
-    collections::HashMap, sync::Arc, time::{Duration, Instant}
+    collections::HashMap, env, sync::Arc, time::{Duration, Instant}
 };
 
 // --- 状态存储 ---
@@ -28,6 +28,8 @@ struct AppState {
     pub current_game_name: String,
     // 游戏开始时间
     pub session_start_time: Option<Instant>,
+
+    pub last_updated_at: Instant,
 }
 
 impl Default for AppState {
@@ -36,6 +38,7 @@ impl Default for AppState {
             current_app_id: 0,
             current_game_name: "未在游玩".to_string(),
             session_start_time: None,
+            last_updated_at: Instant::now(),
         }
     }
 }
@@ -53,6 +56,8 @@ struct StoreData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
+
     tracing_subscriber::fmt()
         .json()
         .with_max_level(tracing::Level::INFO)
@@ -80,9 +85,10 @@ async fn main() -> Result<()> {
         .route("/{token}", get(root_handler))           // 网页外壳
         .route("/current/{token}", get(current_game_handler)) // 动态 Tag 接口
         .route("/upload", post(upload_handler))  // Client 上报接口
+        .route("/upload/{token}/{game_name}", get(upload_redir_handler))  // Client 上报接口
         .with_state(shared_state);
 
-    let listen_addr = "0.0.0.0:3000";
+    let listen_addr = env::var("ADDRESS").unwrap_or("0.0.0.0:3000".to_string());
     info!(address = %listen_addr, "Server starting");
 
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;
@@ -91,16 +97,32 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn upload_redir_handler(
+    State(server_state): State<Arc<ServerState>>,
+    Path((token, game_name)): Path<(String, String)>
+) -> impl IntoResponse {
+    let payload = ReportData {
+        app_id: 114514,
+        token: token.clone(),
+        game_name: Some(game_name),
+    };
+    upload_handler(State(server_state), Json(payload)).await
+}
+
 // --- [核心逻辑] 处理 Client 上报 ---
-#[instrument(skip(server_state, payload), fields(token = %payload.token, app_id = payload.app_id))]
+#[instrument(
+    skip(server_state, payload),
+    fields(token = %payload.token, app_id = payload.app_id, game_name = ?payload.game_name))]
 async fn upload_handler(
     State(server_state): State<Arc<ServerState>>,
     Json(payload): Json<ReportData>,
 ) -> impl IntoResponse {
+    let request_start_time = Instant::now();
+
     let mut old_app_id = 0;
     let mut old_app_name = String::new();
-
     let mut old_start_time = None;
+
     let new_app_id = payload.app_id;
     let token = payload.token;
 
@@ -109,20 +131,20 @@ async fn upload_handler(
     let needs_update = {
         let mut app_states_guard = server_state.app_states.write().await;
         // 如果 token 不存在，这就插入默认值
-        let state = app_states_guard.entry(token.clone()).or_insert_with(AppState::default);
+        let state = app_states_guard.entry(token.clone()).or_insert_with(|| AppState {
+            last_updated_at: request_start_time,
+            ..Default::default()
+        });
 
-        let needs_update = state.current_app_id != new_app_id;
+        let needs_update = match payload.game_name {
+            // 只要 游戏名 变了就更新
+            Some(ref game_name) => state.current_game_name != *game_name,
+            None => state.current_app_id != new_app_id,
+        };
         if needs_update {
             old_app_id = state.current_app_id;
+            old_app_name = state.current_game_name.clone();
             old_start_time = state.session_start_time;
-            old_app_name = if old_app_id != 0 {
-                server_state.name_cache.read().await
-                    .get(&old_app_id)
-                    .cloned()
-                    .unwrap_or_else(|| state.current_game_name.clone())
-            } else {
-                "未在游玩".to_string()
-            };
         }
         // 只有 ID 变了才需要后续的耗时操作
         needs_update
@@ -135,9 +157,15 @@ async fn upload_handler(
     // --- 第二步：准备数据 (无锁裸奔，耗时操作) ---
     // 这里做网络请求，不持有任何 app_states 的锁
     // 其他用户的 /current 接口现在可以秒开
-    let (game_name, start_time) = if new_app_id == 0 {
+    let (game_name, start_time) = if new_app_id == 0 {  // 没有在游玩
         ("未在游玩".to_string(), None)
-    } else {
+    } else if let Some(game_name) = payload.game_name {  // 客户端直接提供了游戏名
+        if game_name == "0" || game_name == "未在游玩" {
+            ("未在游玩".to_string(), None)
+        } else {
+            (game_name, Some(Instant::now()))
+        }
+    } else {  // 需要通过 API 获取游戏名
         // 2.1 先查缓存 (NameCache 有自己的锁，粒度很小)
         let cached_name = {
             let cache = server_state.name_cache.read().await;
@@ -154,7 +182,6 @@ async fn upload_handler(
                 new_app_id
             ).await {
                 Ok(n) => {
-                    // 写入缓存
                     server_state.name_cache.write().await.insert(new_app_id, n.clone());
                     n
                 }
@@ -166,6 +193,7 @@ async fn upload_handler(
         };
         (name, Some(Instant::now()))
     };
+
     let (play_time_str, play_time) =
         if let Some(start) = old_start_time {
             (format_duration(start.elapsed()), start.elapsed().as_secs())
@@ -189,6 +217,12 @@ async fn upload_handler(
         // 这里必须再次获取 entry，因为锁断开了
         let state = app_states_guard.entry(token).or_insert_with(AppState::default);
 
+        if state.last_updated_at > request_start_time {
+            info!("检测到过期请求，丢弃更新 (AppID: {})", new_app_id);
+            return "Ignored";
+        }
+
+        state.last_updated_at = request_start_time;
         state.current_app_id = new_app_id;
         state.current_game_name = game_name;
         state.session_start_time = start_time;

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use steam_current_game::ReportData;
 use std::{env, thread, time::Duration};
 
@@ -44,6 +45,7 @@ async fn main() -> Result<()> {
             let payload = ReportData {
                 app_id: current_id,
                 token: token.clone(),
+                ..Default::default()
             };
 
             // 发送 POST 请求

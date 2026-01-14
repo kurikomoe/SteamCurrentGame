@@ -2,9 +2,13 @@ use serde::{Deserialize, Serialize};
 
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Default)]
+#[serde(default)]
 pub struct ReportData {
     pub app_id: u32,
     pub token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_name: Option<String>,
 }
 
 #[derive(Serialize)]
