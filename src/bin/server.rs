@@ -2,6 +2,7 @@ use anyhow::Result;
 use axum::{
     Router, extract::{Json, Path, State}, http::header, response::IntoResponse, routing::{get, post}
 };
+use clap::Parser;
 use reqwest::Client;
 use serde::Deserialize;
 use steam_current_game::{CurrentGameResponse, GameInfo, ReportData, ServerInfo};
@@ -18,6 +19,7 @@ struct ServerState {
     pub name_cache: Arc<RwLock<HashMap<u32, String>>>,
     pub http_client: Client,
     pub api_base_url: String,
+    pub names_path: String,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +56,13 @@ struct StoreData {
     name: String,
 }
 
+#[derive(Debug, Parser)]
+#[command(name = "SteamCurrentGameServer")]
+struct Cli {
+    #[arg(long, default_value = "./config/name.json")]
+    names: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
@@ -71,6 +80,9 @@ async fn main() -> Result<()> {
     let http_client = Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
+    let cli = Cli::parse();
+    let names_path = cli.names;
+    info!(path = %names_path, "name.json path configured");
 
     // 初始化状态
     let shared_state = Arc::new(ServerState {
@@ -79,6 +91,7 @@ async fn main() -> Result<()> {
         name_cache: Arc::new(RwLock::new(HashMap::new())),
         http_client,
         api_base_url: "https://store.steampowered.com".to_string(),
+        names_path,
     });
 
     let app = Router::new()
@@ -166,28 +179,32 @@ async fn upload_handler(
             (game_name, Some(Instant::now()))
         }
     } else {  // 需要通过 API 获取游戏名
-        // 2.1 先查缓存 (NameCache 有自己的锁，粒度很小)
-        let cached_name = {
-            let cache = server_state.name_cache.read().await;
-            cache.get(&new_app_id).cloned()
-        };
-
-        let name = if let Some(n) = cached_name {
+        let name = if let Some(n) = lookup_name_override(&server_state.names_path, new_app_id).await {
             n
         } else {
-            // 2.2 缓存没有，发网络请求 (这里是最慢的，但现在是无锁的！)
-            match fetch_game_name(
-                &server_state.http_client,
-                &server_state.api_base_url,
-                new_app_id
-            ).await {
-                Ok(n) => {
-                    server_state.name_cache.write().await.insert(new_app_id, n.clone());
-                    n
-                }
-                Err(e) => {
-                    error!(error = %e, app_id = new_app_id, "Steam API 请求失败");
-                    format!("未知游戏 ({})", new_app_id)
+            // 2.1 先查缓存 (NameCache 有自己的锁，粒度很小)
+            let cached_name = {
+                let cache = server_state.name_cache.read().await;
+                cache.get(&new_app_id).cloned()
+            };
+
+            if let Some(n) = cached_name {
+                n
+            } else {
+                // 2.2 缓存没有，发网络请求 (这里是最慢的，但现在是无锁的！)
+                match fetch_game_name(
+                    &server_state.http_client,
+                    &server_state.api_base_url,
+                    new_app_id
+                ).await {
+                    Ok(n) => {
+                        server_state.name_cache.write().await.insert(new_app_id, n.clone());
+                        n
+                    }
+                    Err(e) => {
+                        error!(error = %e, app_id = new_app_id, "Steam API 请求失败");
+                        format!("未知游戏 ({})", new_app_id)
+                    }
                 }
             }
         };
@@ -326,6 +343,21 @@ fn format_duration(elapsed: Duration) -> String {
         format!("{:02}:{:02}:{:02}", hours, minutes, secs)
     } else {
         format!("{:02}:{:02}", minutes, secs)
+    }
+}
+
+async fn lookup_name_override(path: &str, app_id: u32) -> Option<String> {
+    let content = match tokio::fs::read_to_string(path).await {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+
+    match serde_json::from_str::<HashMap<String, String>>(&content) {
+        Ok(map) => map.get(&app_id.to_string()).cloned(),
+        Err(e) => {
+            error!(error = %e, path = %path, "name.json 解析失败，已忽略");
+            None
+        }
     }
 }
 
