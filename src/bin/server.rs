@@ -114,11 +114,20 @@ async fn upload_redir_handler(
     State(server_state): State<Arc<ServerState>>,
     Path((token, game_name)): Path<(String, String)>
 ) -> impl IntoResponse {
-    let payload = ReportData {
-        app_id: 114514,
-        token: token.clone(),
-        game_name: Some(game_name),
+    let payload = if let Ok(app_id) = game_name.parse::<u32>() {
+        ReportData {
+            app_id,
+            token: token.clone(),
+            game_name: None,
+        }
+    } else {
+        ReportData {
+            app_id: 114514,
+            token: token.clone(),
+            game_name: Some(game_name),
+        }
     };
+
     upload_handler(State(server_state), Json(payload)).await
 }
 
