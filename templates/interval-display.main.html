@@ -28,7 +28,7 @@
 
             /* --- 核心动画设置 --- */
 
-            /* 1. 初始状态：透明 且 向上偏移 (隐藏在上面) */
+            /* 1. 初始状态 (Idle/Exit)：透明 且 向上偏移 */
             opacity: 0;
             transform: translateY(-50px);
 
@@ -40,11 +40,17 @@
             will-change: opacity, transform;
         }
 
-        /* --- 显示状态的 Class --- */
+        /* --- 状态 1: 完全显示 (Cycle On) --- */
         #container.visible {
             opacity: 1;
-            /* 回到正常位置，形成下移效果 */
-            transform: translateY(0);
+            transform: translateY(0); /* 在正常位置 */
+        }
+
+        /* --- 状态 2: 变淡隐藏 (Cycle Off) --- */
+        /* 新增：只降低透明度，不改变位置，不完全消失 */
+        #container.dimmed {
+            opacity: 0.3;
+            transform: translateY(0); /* 保持在正常位置，不要上浮 */
         }
     </style>
 </head>
@@ -56,48 +62,47 @@
         const API_URL = "/current/%token%";
         const REFRESH_INTERVAL = 1000;
         const CYCLE_INTERVAL = 30000;
-        const ANIMATION_DURATION = 2000; // 必须匹配 CSS 中的 transition 时间 (2s = 2000ms)
+        const ANIMATION_DURATION = 2000; // 必须匹配 CSS 中的 transition 时间
 
         const container = document.getElementById('container');
 
         // 状态变量
         let isGameRunning = false;
         let isInDisplayCycle = true;
-        let lastShowState = false;
+        // let lastShowState = false; // (已移除) 新逻辑不再单纯依赖布尔值切换，直接管理 Class
 
-        // --- 新增：会话控制变量 ---
-        let currentSignature = "idle"; // 当前游戏的签名 (AppID_StartTime)
-        let isSwitchingGame = false;   // 是否正在执行切游戏动画
-        let localBootId = null;        // 服务器实例 ID (用于检测重启)
+        // --- 会话控制变量 ---
+        let currentSignature = "idle";
+        let isSwitchingGame = false;
+        let localBootId = null;
 
-        // 核心渲染函数
+        // --- 核心渲染函数 (逻辑已重写) ---
         const render = () => {
-            // 如果正在转场中，强制执行“退出动画” (移除 visible)
-            if (isSwitchingGame) {
-                if (container.classList.contains('visible')) {
-                    container.classList.remove('visible');
-                    console.log("Animation: Switching Game - Sliding Out");
+            // 场景 A: 正在切游戏 或 游戏完全退出 -> 执行"退出动画" (上浮 + 全透明)
+            if (isSwitchingGame || !isGameRunning) {
+                // 移除 visible 和 dimmed，强制回退到 CSS 中 #container 的默认状态
+                if (container.classList.contains('visible') || container.classList.contains('dimmed')) {
+                    container.classList.remove('visible', 'dimmed');
+                    console.log("Animation: Exit/Switch -> Slide Out");
                 }
                 return;
             }
 
-            const shouldShow = isGameRunning && isInDisplayCycle;
-
-            // 只有当状态真正改变时才操作 DOM，性能更好
-            if (shouldShow !== lastShowState) {
-                requestAnimationFrame(() => {
-                    if (shouldShow) {
-                        container.classList.add('visible');
-                    } else {
-                        container.classList.remove('visible');
-                    }
-                });
-
-                lastShowState = shouldShow;
-
-                console.log(
-                    `Animation Triggered: ${shouldShow ? 'Slide In' : 'Slide Out'}`
-                );
+            // 场景 B: 游戏运行中 -> 在"高亮"和"变淡"之间切换
+            if (isInDisplayCycle) {
+                // 周期：显示
+                if (!container.classList.contains('visible')) {
+                    container.classList.remove('dimmed'); // 移除变淡
+                    container.classList.add('visible');   // 添加高亮
+                    console.log("Animation: Cycle -> Full Visibility");
+                }
+            } else {
+                // 周期：隐藏 (变淡)
+                if (!container.classList.contains('dimmed')) {
+                    container.classList.remove('visible'); // 移除高亮
+                    container.classList.add('dimmed');     // 添加变淡
+                    console.log("Animation: Cycle -> Dimmed (0.1)");
+                }
             }
         };
 
@@ -119,12 +124,10 @@
             try {
                 const response = await fetch(API_URL);
                 if (response.ok) {
-                    // --- 核心修改：解析 JSON ---
                     const json = await response.json();
                     const { server, info, render: newHtmlContent } = json;
 
-                    // --- [新增] 服务器重启检测 ---
-                    // 如果本地没有 ID，就记录下来；如果 ID 变了，说明服务器重启过，刷新页面
+                    // 服务器重启检测
                     if (localBootId === null) {
                         localBootId = server.boot_id;
                         console.log(`Connected to Server Instance: ${localBootId}`);
@@ -150,15 +153,14 @@
                         render();
                     }
                     // --- 场景 2: 切换游戏 (签名变了) ---
-                    // 比如从 Dota2 换成 CS2，或者同一个游戏重启了
                     else if (isGameRunning && info.is_running && info.signature !== currentSignature) {
                         console.log(`Switching Game: ${currentSignature} -> ${info.signature}`);
 
                         // 1. 锁定状态，开始转场
                         isSwitchingGame = true;
-                        render(); // 这会触发 CSS 的 Slide Out 动画
+                        render(); // 这会触发 Scenario A，Slide Out 动画
 
-                        // 2. 等待动画结束 (2秒)
+                        // 2. 等待动画结束
                         setTimeout(() => {
                             // 3. 替换内容
                             container.innerHTML = newHtmlContent;
@@ -166,18 +168,16 @@
 
                             // 4. 解锁并重置状态
                             isSwitchingGame = false;
-                            isInDisplayCycle = true; // 新游戏开始，必须显示
+                            isInDisplayCycle = true; // 新游戏开始，必须高亮显示
 
                             clearInterval(cycleIntervalId);
                             cycleIntervalId = setInterval(toggleCycle, CYCLE_INTERVAL);
 
-                            // 5. 强制触发 Slide In 动画
-                            lastShowState = false; // 欺骗 render 函数认为状态变了
+                            // 5. 触发进入动画
                             render();
                         }, ANIMATION_DURATION);
                     }
                     // --- 场景 3: 同一个游戏，只更新时间 ---
-                    // 签名没变，只更新 HTML 内容
                     else if (isGameRunning && info.is_running) {
                         if (container.innerHTML !== newHtmlContent) {
                             container.innerHTML = newHtmlContent;
